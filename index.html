@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Flappy Bee 🐝</title>
+  <style>
+    /* Remove default margins, disable scrolling, and set background */
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #70c5ce; /* Sky blue */
+    }
+
+    /* Make canvas fill screen horizontally and vertically centered */
+    canvas {
+      display: block;
+      margin: 0 auto;
+      background: #70c5ce;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Main game canvas -->
+<canvas id="gameCanvas"></canvas>
+
+<script>
+// === Initialization and Constants ===
+
+const canvas = document.getElementById('gameCanvas'); // Reference to the canvas
+const ctx = canvas.getContext('2d'); // Get 2D drawing context
+
+// Game dimensions
+const GAME_WIDTH = 288;
+const GAME_HEIGHT = 512;
+const GROUND_HEIGHT = 112; // Bottom ground height
+
+// Physics constants
+const GRAVITY = 0.25;           // Downward acceleration
+const FLAP_VELOCITY = -4.0;     // Velocity when bee flaps
+const MAX_FALL_SPEED = 10;      // Terminal velocity
+
+// Pipe settings
+const PIPE_SPEED = 2;           // Pipes move left
+const PIPE_GAP = 100;           // Gap between top and bottom pipes
+const PIPE_WIDTH = 52;
+
+// Frame timing
+const TARGET_FPS = 60;
+const FRAME_DURATION = 1000 / TARGET_FPS;
+
+// Scaling factor for responsive design
+let scale = 1;
+
+// === Responsive Canvas Resize ===
+function resizeCanvas() {
+    const windowRatio = window.innerWidth / window.innerHeight;
+    const gameRatio = GAME_WIDTH / GAME_HEIGHT;
+
+    // Scale to fit screen while maintaining aspect ratio
+    scale = windowRatio > gameRatio
+        ? window.innerHeight / GAME_HEIGHT
+        : window.innerWidth / GAME_WIDTH;
+
+    canvas.width = GAME_WIDTH * scale;
+    canvas.height = GAME_HEIGHT * scale;
+
+    ctx.setTransform(scale, 0, 0, scale, 0, 0); // Apply scaling to all draw calls
+}
+
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas(); // Initial call
+
+// === Game State Variables ===
+
+// Bee properties
+let bee = {
+    x: 50,
+    y: GAME_HEIGHT / 2,
+    width: 34,
+    height: 24,
+    velocity: 0,
+    rotation: 0
+};
+
+// List of pipes currently on screen
+let pipes = [];
+
+let frame = 0;          // Global frame counter
+let score = 0;          // Player's score
+let gameOver = false;   // Game state flag
+let canRestart = false; // Allow restart after brief delay
+
+// === Input Handling ===
+
+// Called on key press or mouse click
+function flap() {
+    if (gameOver) {
+        if (canRestart) resetGame();
+    } else {
+        bee.velocity = FLAP_VELOCITY; // Make bee go up
+    }
+}
+
+// === Game Reset Function ===
+function resetGame() {
+    bee.y = GAME_HEIGHT / 2;
+    bee.velocity = 0;
+    bee.rotation = 0;
+
+    pipes = [];
+    frame = 0;
+    score = 0;
+    gameOver = false;
+    canRestart = false;
+    lastTime = 0;
+
+    requestAnimationFrame(gameLoop);
+}
+
+// === Bee Drawing Function ===
+function drawBee() {
+    ctx.save();
+    ctx.translate(bee.x + bee.width / 2, bee.y + bee.height / 2); // Move origin to bee center
+    ctx.rotate(bee.rotation); // Apply rotation
+    ctx.scale(-1, 1); // Flip bee horizontally
+
+    ctx.font = `${bee.height * 2}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🐝', 0, 0); // Draw bee emoji
+    ctx.restore();
+}
+
+// === Hexagon Drawing Helper ===
+function drawHexagon(x, y, size) {
+    const angle = Math.PI / 3; // 60 degrees in radians
+    ctx.beginPath();
+
+    for (let i = 0; i < 6; i++) {
+        const dx = x + size * Math.cos(i * angle);
+        const dy = y + size * Math.sin(i * angle);
+        i === 0 ? ctx.moveTo(dx, dy) : ctx.lineTo(dx, dy);
+    }
+
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+}
+
+// === Pipe Drawing Function ===
+function drawPipes() {
+    ctx.fillStyle = '#F4C430';  // Pipe color (honeycomb yellow)
+    ctx.strokeStyle = '#D4AF37'; // Border color (gold)
+    ctx.lineWidth = 1;
+
+    const hexSize = 10;
+    const hexHeight = Math.sqrt(3) * hexSize;
+
+    pipes.forEach(pipe => {
+        // Top pipe
+        for (let y = 0; y < pipe.top; y += hexHeight) {
+            for (let x = pipe.x; x < pipe.x + PIPE_WIDTH; x += hexSize * 1.5) {
+                drawHexagon(x, y, hexSize);
+            }
+        }
+
+        // Bottom pipe
+        const bottomY = pipe.top + PIPE_GAP;
+        for (let y = bottomY; y < GAME_HEIGHT - GROUND_HEIGHT; y += hexHeight) {
+            for (let x = pipe.x; x < pipe.x + PIPE_WIDTH; x += hexSize * 1.5) {
+                drawHexagon(x, y, hexSize);
+            }
+        }
+    });
+}
+
+// === Draw Ground ===
+function drawGround() {
+    ctx.fillStyle = '#DEB887'; // Brown ground
+    ctx.fillRect(0, GAME_HEIGHT - GROUND_HEIGHT, GAME_WIDTH, GROUND_HEIGHT);
+}
+
+// === Draw Score Text ===
+function drawScore() {
+    ctx.fillStyle = '#fff';
+    ctx.font = '32px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(score, GAME_WIDTH / 2, 50);
+}
+
+// === Game Update Logic ===
+function update() {
+    if (gameOver) return;
+
+    // Apply gravity
+    bee.velocity += GRAVITY;
+    bee.velocity = Math.min(bee.velocity, MAX_FALL_SPEED);
+    bee.y += bee.velocity;
+
+    // Rotate bee based on motion
+    bee.rotation = bee.velocity < 0 ? -0.3 : Math.min(bee.rotation + 0.03, 1.5);
+
+    // Add new pipe every 90 frames
+    if (frame % 90 === 0) {
+        const top = Math.random() * (GAME_HEIGHT - GROUND_HEIGHT - PIPE_GAP - 80) + 20;
+        pipes.push({ x: GAME_WIDTH, top: top });
+    }
+
+    pipes.forEach(pipe => {
+        pipe.x -= PIPE_SPEED;
+
+        // Collision detection
+        const inXRange = bee.x < pipe.x + PIPE_WIDTH && bee.x + bee.width > pipe.x;
+        const hitsTop = bee.y < pipe.top;
+        const hitsBottom = bee.y + bee.height > pipe.top + PIPE_GAP;
+
+        if (inXRange && (hitsTop || hitsBottom)) {
+            triggerGameOver();
+        }
+
+        // Score update when pipe passed
+        if (!pipe.scored && pipe.x + PIPE_WIDTH < bee.x) {
+            score++;
+            pipe.scored = true;
+        }
+    });
+
+    // Remove off-screen pipes
+    pipes = pipes.filter(pipe => pipe.x + PIPE_WIDTH > 0);
+
+    // Check for collision with ground
+    if (bee.y + bee.height > GAME_HEIGHT - GROUND_HEIGHT) {
+        triggerGameOver();
+    }
+
+    frame++;
+}
+
+// === Trigger Game Over State ===
+function triggerGameOver() {
+    if (!gameOver) {
+        gameOver = true;
+        setTimeout(() => {
+            canRestart = true;
+        }, 1000); // Delay restart availability
+    }
+}
+
+// === Main Game Loop ===
+
+let lastTime = 0;
+
+function gameLoop(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    const delta = timestamp - lastTime;
+
+    // Control frame rate
+    if (delta >= FRAME_DURATION) {
+        lastTime = timestamp - (delta % FRAME_DURATION);
+
+        ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+        update();
+        drawPipes();
+        drawGround();
+        drawBee();
+        drawScore();
+
+        // Show game over screen
+        if (gameOver) {
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.font = '24px sans-serif';
+            ctx.fillText('Game Over', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 10);
+            ctx.font = '18px sans-serif';
+            ctx.fillText('Press Any Key or Click', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 20);
+        }
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+// === Input Listeners ===
+document.addEventListener('keydown', () => flap());
+canvas.addEventListener('click', () => flap());
+
+// === Start the Game ===
+resetGame();
+
+</script>
+</body>
+</html>
